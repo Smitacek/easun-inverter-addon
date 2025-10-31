@@ -1,0 +1,15 @@
+ARG BUILD_FROM
+FROM ${BUILD_FROM}
+
+SHELL ["/bin/ash", "-o", "pipefail", "-c"]
+
+RUN apk add --no-cache bash curl jq
+
+WORKDIR /app
+
+COPY requirements.txt requirements.txt
+RUN pip3 install --no-cache-dir -r requirements.txt
+
+COPY . /app
+
+CMD ["/usr/bin/with-contenv", "/app/run.sh"]
