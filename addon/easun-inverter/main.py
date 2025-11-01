@@ -41,6 +41,9 @@ def main():
         # If 3-phase grouping requested and phases L1/L2/L3 present, publish aggregator discovery
         if cfg.group_3phase and {i.phase for i in inv_cfgs} >= {'L1','L2','L3'}:
             mqtt.publish_discovery_for_device(f"{cfg.device_id}_3phase", "EASUN 3-Phase System")
+        # Legacy base discovery for first inverter (backward compatibility)
+        if getattr(cfg, 'legacy_base_topics', True) and inv_cfgs:
+            mqtt.publish_discovery()
 
     # Keep process alive; retry on open/read errors for each inverter sequentially
     while True:
@@ -70,7 +73,7 @@ def main():
                 agg_apparent = 0
                 agg_pv = 0
                 phases_present = set()
-                for ic, inv in inv_objs:
+                for idx, (ic, inv) in enumerate(inv_objs):
                     did = f"{cfg.device_id}_{(ic.name or ic.port).lower().replace(' ','_')}"
                     data = {}
                     try:
@@ -85,11 +88,19 @@ def main():
                                 mqtt.publish_state_for_device(did, data)
                             except Exception as e:
                                 logging.error(f'MQTT publish error: {e}')
+                            # Legacy base topics for first inverter
+                            if idx == 0 and getattr(cfg, 'legacy_base_topics', True):
+                                try:
+                                    mqtt.publish_state(data)
+                                except Exception:
+                                    pass
                         # extended queries
                         try:
                             mod = inv.query_qmod()
                             if mod and connected:
                                 mqtt.publish_state_for_device(did, mod)
+                                if idx == 0 and getattr(cfg, 'legacy_base_topics', True):
+                                    mqtt.publish_state(mod)
                         except Exception:
                             pass
                         if (loop_count % max(1, int(q1_every / max(1, cfg.read_interval)))) == 0:
@@ -97,6 +108,8 @@ def main():
                                 q1 = inv.query_q1()
                                 if q1 and connected:
                                     mqtt.publish_state_for_device(did, q1)
+                                    if idx == 0 and getattr(cfg, 'legacy_base_topics', True):
+                                        mqtt.publish_state(q1)
                             except Exception:
                                 pass
                         # FW/SN once
@@ -104,6 +117,8 @@ def main():
                             fwsn = inv.query_fw_sn()
                             if fwsn and connected:
                                 mqtt.publish_state_for_device(did, fwsn)
+                                if idx == 0 and getattr(cfg, 'legacy_base_topics', True):
+                                    mqtt.publish_state(fwsn)
                         except Exception:
                             pass
                         now = time.time()
@@ -113,6 +128,8 @@ def main():
                                 qpiri = inv.query_qpiri()
                                 if qpiri and connected:
                                     mqtt.publish_state_for_device(did, qpiri)
+                                    if idx == 0 and getattr(cfg, 'legacy_base_topics', True):
+                                        mqtt.publish_state(qpiri)
                             except Exception:
                                 pass
                             last_qpiri[did] = now

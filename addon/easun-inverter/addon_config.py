@@ -51,6 +51,8 @@ class Config:
 
         # 3-phase grouping
         self.group_3phase = bool(options.get('group_3phase', False))
+        # Backward compatibility: also publish base topics for first inverter
+        self.legacy_base_topics = bool(options.get('legacy_base_topics', True))
 
         # MQTT
         self.mqtt_host = options.get('mqtt_host', os.getenv('MQTT_HOST', 'core-mosquitto'))
