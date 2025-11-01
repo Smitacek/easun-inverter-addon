@@ -37,7 +37,12 @@ def main():
             continue
 
         try:
+            # Periodic counters
+            last_qpiri = 0.0
+            q1_every = max(30, cfg.read_interval * 2)
+            loop_count = 0
             while True:
+                loop_count += 1
                 data = {}
                 try:
                     data = inv.read_snapshot()
@@ -50,6 +55,31 @@ def main():
                             mqtt.publish_state(data)
                         except Exception as e:
                             logging.error(f'MQTT publish error: {e}')
+                    # QMOD each loop
+                    try:
+                        mod = inv.query_qmod()
+                        if mod and connected:
+                            mqtt.publish_state(mod)
+                    except Exception:
+                        pass
+                    # Q1 periodically
+                    if (loop_count % max(1, int(q1_every / max(1, cfg.read_interval)))) == 0:
+                        try:
+                            q1 = inv.query_q1()
+                            if q1 and connected:
+                                mqtt.publish_state(q1)
+                        except Exception:
+                            pass
+                    # QPIRI at start and then every 24h
+                    now = time.time()
+                    if now - last_qpiri > 24 * 3600:
+                        try:
+                            qpiri = inv.query_qpiri()
+                            if qpiri and connected:
+                                mqtt.publish_state(qpiri)
+                        except Exception:
+                            pass
+                        last_qpiri = now
                 else:
                     logging.warning('No data received')
                 time.sleep(cfg.read_interval)

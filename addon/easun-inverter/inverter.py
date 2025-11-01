@@ -92,6 +92,121 @@ class Inverter:
                 time.sleep(0.2)
         return None
 
+    def query_qmod(self) -> Dict[str, str]:
+        """Query inverter mode (QMOD) and map code to text."""
+        out: Dict[str, str] = {}
+        line = self.query('QMOD')
+        if not line:
+            return out
+        # Response typically like: (L) or (B) etc.
+        if line.startswith('(') and ')' in line:
+            code = line[1:line.find(')')]
+        else:
+            code = line.strip()
+        mode_map = {
+            'P': 'Power On',
+            'S': 'Standby',
+            'L': 'Line',
+            'B': 'Battery',
+            'F': 'Fault',
+            'H': 'Power Saving',
+            'D': 'Shutdown',
+            'Y': 'Bypass',
+        }
+        out['inverter_mode_code'] = code
+        out['inverter_mode'] = mode_map.get(code, code)
+        return out
+
+    def query_q1(self) -> Dict[str, float | str]:
+        """Query extended status (Q1) for temps, SCC charge power, sync frequency, charge stage."""
+        out: Dict[str, float | str] = {}
+        line = self.query('Q1', retries=1, delay=0.15)
+        if not line:
+            return out
+        # Extract payload inside parentheses
+        if line.startswith('('):
+            payload = line[1:line.find(')')] if ')' in line else line[1:]
+        else:
+            payload = line
+        tokens = [t for t in payload.strip().split(' ') if t]
+        # Helper to safe-int/float
+        def as_int(idx: int) -> Optional[int]:
+            if idx < len(tokens):
+                t = re.sub(r"[^0-9+\-.]", "", tokens[idx])
+                try:
+                    return int(t)
+                except Exception:
+                    try:
+                        return int(float(t))
+                    except Exception:
+                        return None
+            return None
+        def as_float(idx: int) -> Optional[float]:
+            if idx < len(tokens):
+                t = re.sub(r"[^0-9+\-.]", "", tokens[idx])
+                try:
+                    return float(t)
+                except Exception:
+                    return None
+            return None
+        # According to PI30 mapping (1-based in docs), approximate indices (0-based here)
+        out['scc_pwm_temp_c'] = as_int(5) or 0
+        out['inverter_temp_c'] = as_int(6) or 0
+        out['battery_temp_c'] = as_int(7) or 0
+        out['transformer_temp_c'] = as_int(8) or 0
+        out['scc_charge_power_w'] = as_int(13) or 0
+        sf = as_float(15)
+        if sf is not None:
+            out['sync_frequency_hz'] = sf
+        # Charge status (index 16 usually string like '10','11','12','13')
+        if 16 < len(tokens):
+            status_code = re.sub(r"[^0-9]", "", tokens[16])
+            charge_map = {
+                '10': 'nocharging',
+                '11': 'bulk',
+                '12': 'absorb',
+                '13': 'float',
+            }
+            out['charge_stage'] = charge_map.get(status_code, status_code)
+        return out
+
+    def query_qpiri(self) -> Dict[str, float | int | str]:
+        """Query current settings (QPIRI) and parse primary fields."""
+        out: Dict[str, float | int | str] = {}
+        line = self.query('QPIRI', retries=1, delay=0.15)
+        if not line:
+            return out
+        if line.startswith('('):
+            payload = line[1:line.find(')')] if ')' in line else line[1:]
+        else:
+            payload = line
+        tokens = [t for t in payload.strip().split(' ') if t]
+        def f(i):
+            try:
+                return float(tokens[i])
+            except Exception:
+                return None
+        def iv(i):
+            try:
+                return int(float(tokens[i]))
+            except Exception:
+                return None
+        # Map first dozen fields commonly present
+        if len(tokens) >= 12:
+            out['qpiri_ac_input_voltage_v'] = f(0)
+            out['qpiri_ac_input_current_a'] = f(1)
+            out['qpiri_ac_output_voltage_v'] = f(2)
+            out['qpiri_ac_output_frequency_hz'] = f(3)
+            out['qpiri_ac_output_current_a'] = f(4)
+            out['qpiri_ac_output_apparent_power_va'] = iv(5)
+            out['qpiri_ac_output_active_power_w'] = iv(6)
+            out['qpiri_battery_voltage_v'] = f(7)
+            out['qpiri_battery_recharge_voltage_v'] = f(8)
+            out['qpiri_battery_under_voltage_v'] = f(9)
+            out['qpiri_battery_bulk_charge_voltage_v'] = f(10)
+            out['qpiri_battery_float_charge_voltage_v'] = f(11)
+        return out
+
     def parse_qpigs(self, line: str) -> Dict[str, float]:
         """Parse QPIGS line using PI30 field order (21 tokens)."""
         if not line:

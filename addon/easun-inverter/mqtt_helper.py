@@ -101,6 +101,20 @@ class InverterMQTT:
             ('pv2_input_current_a', 'PV2 Input Current', 'A', 'current'),
             ('pv2_input_voltage_v', 'PV2 Input Voltage', 'V', 'voltage'),
             ('pv2_input_power_w', 'PV2 Input Power', 'W', 'power'),
+            # Q1 extended
+            ('scc_pwm_temp_c', 'SCC PWM Temperature', '°C', 'temperature'),
+            ('inverter_temp_c', 'Inverter Temperature', '°C', 'temperature'),
+            ('battery_temp_c', 'Battery Temperature', '°C', 'temperature'),
+            ('transformer_temp_c', 'Transformer Temperature', '°C', 'temperature'),
+            ('scc_charge_power_w', 'SCC Charge Power', 'W', 'power'),
+            ('sync_frequency_hz', 'Sync Frequency', 'Hz', None),
+            ('inverter_mode', 'Inverter Mode', '', None),
+            ('charge_stage', 'Charge Stage', '', None),
+            # QPIRI selected settings
+            ('qpiri_battery_recharge_voltage_v', 'Battery Recharge Voltage (QPIRI)', 'V', 'voltage'),
+            ('qpiri_battery_under_voltage_v', 'Battery Under Voltage (QPIRI)', 'V', 'voltage'),
+            ('qpiri_battery_bulk_charge_voltage_v', 'Battery Bulk Voltage (QPIRI)', 'V', 'voltage'),
+            ('qpiri_battery_float_charge_voltage_v', 'Battery Float Voltage (QPIRI)', 'V', 'voltage'),
         ]
         for key, name, unit, dclass in sensors:
             self._publish_sensor_config(key, name, unit, dclass, base)
