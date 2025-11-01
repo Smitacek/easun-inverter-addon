@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.2.1] - 2025-11-01
+### Fixed
+- Logging and startup: handle single vs. multi-inverter configs without referencing deprecated cfg.port/cfg.baudrate.
+- Minor discovery/version string updates.
+
+## [0.2.0] - 2025-11-01
+### Added
+- Multi-inverter mode: per-inverter MQTT discovery/state and per-device availability.
+- Optional 3-phase aggregator (sum of active/apparent/PV power) when phases L1/L2/L3 present.
+- Firmware/Serial publishing: QVFW/QVFW2/QVFW3 and QSID/QID as info sensors per inverter.
+
+### Changed
+- Stage set to stable.
+
 ## [0.1.1] - 2025-11-01
 ### Fixed
 - Keep the add-on running: retry opening the serial port on failure and continue on read errors.
