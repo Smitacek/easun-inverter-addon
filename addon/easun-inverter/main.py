@@ -71,6 +71,7 @@ def main():
                 agg_pv = 0
                 phases_present = set()
                 for ic, inv in inv_objs:
+                    did = f"{cfg.device_id}_{(ic.name or ic.port).lower().replace(' ','_')}"
                     data = {}
                     try:
                         data = inv.read_snapshot()
@@ -80,7 +81,6 @@ def main():
                         short = ', '.join(f'{k}={v}' for k, v in list(data.items())[:6])
                         logging.info(f"{ic.name or ic.port} QPIGS: {short} ...")
                         if connected:
-                            did = f"{cfg.device_id}_{(ic.name or ic.port).lower().replace(' ','_')}"
                             try:
                                 mqtt.publish_state_for_device(did, data)
                             except Exception as e:
