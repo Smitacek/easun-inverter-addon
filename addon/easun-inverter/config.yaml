@@ -1,5 +1,5 @@
 name: "EASUN Inverter"
-version: "0.1.1"
+version: "0.1.2"
 slug: "easun-inverter"
 description: "Read EASUN/Voltronic inverter via RS232/USB and publish to MQTT with Home Assistant discovery"
 arch:
