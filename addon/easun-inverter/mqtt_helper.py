@@ -78,7 +78,7 @@ class InverterMQTT:
         base = {
             'manufacturer': 'EASUN',
             'model': 'Inverter',
-            'sw_version': '0.1.2',
+            'sw_version': '0.1.3',
         }
         sensors = [
             ('ac_input_voltage_v', 'AC Input Voltage', 'V', 'voltage'),

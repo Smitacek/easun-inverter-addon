@@ -12,6 +12,10 @@
 ### Fixed
 - QPIGS parsing aligned with PI30 protocol (21 tokens). Correct field order and types; publish standard AC input/output, battery, PV and status metrics.
 
+## [0.1.3] - 2025-11-01
+### Changed
+- Align displayed and discovery software version strings to 0.1.3.
+
 ## [0.1.0] - 2025-10-31
 ### Added
 - Initial add-on: EASUN/Voltronic inverter over RS232/USB.
