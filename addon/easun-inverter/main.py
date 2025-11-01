@@ -40,9 +40,9 @@ def main():
     # Keep process alive; retry on open/read errors for each inverter sequentially
     while True:
         # Build fresh objects each outer loop to recover failures
-            inv_objs = []
-            for ic in inv_cfgs:
-                inv_objs.append((ic, Inverter(ic.port, baudrate=ic.baudrate, timeout=ic.timeout)))
+        inv_objs = []
+        for ic in inv_cfgs:
+            inv_objs.append((ic, Inverter(ic.port, baudrate=ic.baudrate, timeout=ic.timeout)))
         try:
             for _, inv in inv_objs:
                 try:
