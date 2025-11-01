@@ -9,6 +9,9 @@
 ### Added
 - New SVG icon for the add-on UI.
 
+### Fixed
+- QPIGS parsing aligned with PI30 protocol (21 tokens). Correct field order and types; publish standard AC input/output, battery, PV and status metrics.
+
 ## [0.1.0] - 2025-10-31
 ### Added
 - Initial add-on: EASUN/Voltronic inverter over RS232/USB.

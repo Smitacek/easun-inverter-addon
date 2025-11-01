@@ -93,34 +93,83 @@ class Inverter:
         return None
 
     def parse_qpigs(self, line: str) -> Dict[str, float]:
-        """Parse QPIGS line -> dict of values; ignores CRC and parentheses."""
-        # Typical response may look like: (xxx xxx ... )<CRC>
+        """Parse QPIGS line using PI30 field order (21 tokens)."""
         if not line:
             return {}
-        # Strip leading '(' and trailing sequence before checksum
-        if line[0] == '(':
+        # Extract payload inside parentheses (ignore trailing CRC bytes)
+        if line.startswith('('):
             line = line[1:]
-        # Remove everything after and including ')'
         if ')' in line:
             line = line.split(')')[0]
-        # Split and sanitize tokens: keep digits, sign and decimal point
+        # Tokenize and sanitize numeric tokens
         raw_parts = [p for p in line.strip().split(' ') if p]
         parts: List[str] = []
         for tok in raw_parts:
             cleaned = re.sub(r"[^0-9+\-.]", "", tok)
             parts.append(cleaned)
-        keys = self._map.get('QPIGS', [])
+
+        # PI30 QPIGS mapping (indices 0..20)
+        field_keys: List[str] = [
+            'ac_input_voltage_v',            # 0
+            'ac_input_frequency_hz',         # 1
+            'ac_output_voltage_v',           # 2
+            'ac_output_frequency_hz',        # 3
+            'ac_output_apparent_power_va',   # 4
+            'ac_output_active_power_w',      # 5
+            'ac_output_load_percent',        # 6
+            'bus_voltage_v',                 # 7
+            'battery_voltage_v',             # 8
+            'battery_charging_current_a',    # 9
+            'battery_capacity_percent',      # 10
+            'inverter_heatsink_temp_c',      # 11
+            'pv_input_current_a',            # 12
+            'pv_input_voltage_v',            # 13
+            'battery_voltage_scc_v',         # 14
+            'battery_discharge_current_a',   # 15
+            'device_status_bits',            # 16 (8-bit ascii flags)
+            'rsv1',                          # 17
+            'rsv2',                          # 18
+            'pv_input_power_w',              # 19
+            'device_status2_bits',           # 20 (3-bit ascii flags)
+        ]
+
         data: Dict[str, float] = {}
-        for i, key in enumerate(keys):
-            if i < len(parts):
-                try:
-                    val = float(parts[i])
-                except ValueError:
-                    try:
-                        val = int(parts[i])
-                    except Exception:
-                        continue
-                data[key] = val
+        for i, key in enumerate(field_keys):
+            if i >= len(parts):
+                break
+            val_s = parts[i]
+            if key in ('device_status_bits', 'device_status2_bits'):
+                data[key] = val_s
+                continue
+            try:
+                if key in ('ac_output_apparent_power_va', 'ac_output_active_power_w', 'ac_output_load_percent',
+                           'battery_charging_current_a', 'battery_capacity_percent', 'inverter_heatsink_temp_c',
+                           'battery_discharge_current_a', 'rsv1', 'rsv2', 'pv_input_power_w', 'bus_voltage_v'):
+                    data[key] = int(val_s)
+                else:
+                    data[key] = float(val_s)
+            except Exception:
+                continue
+
+        # Derive useful boolean flags from device_status_bits
+        bits = str(data.get('device_status_bits', ''))
+        if len(bits) == 8 and bits.isdigit():
+            try:
+                data['status_sbu_priority_added'] = bits[0] == '1'
+                data['status_configuration_changed'] = bits[1] == '1'
+                data['status_scc_fw_updated'] = bits[2] == '1'
+                data['status_load_on'] = bits[3] == '1'
+                data['status_batt_steady_while_charging'] = bits[4] == '1'
+                data['status_charging_on'] = bits[5] == '1'
+                data['status_scc_charging_on'] = bits[6] == '1'
+                data['status_ac_charging_on'] = bits[7] == '1'
+            except Exception:
+                pass
+        bits2 = str(data.get('device_status2_bits', ''))
+        if len(bits2) == 3 and bits2.isdigit():
+            data['status_charging_to_float'] = bits2[0] == '1'
+            data['status_switched_on'] = bits2[1] == '1'
+
         return data
 
     def read_snapshot(self) -> Dict[str, float]:

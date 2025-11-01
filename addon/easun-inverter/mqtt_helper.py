@@ -74,25 +74,29 @@ class InverterMQTT:
             pass
 
     def publish_discovery(self):
-        """Publish HA discovery for a base set of sensors."""
+        """Publish HA discovery for common PI30 QPIGS sensors."""
         base = {
             'manufacturer': 'EASUN',
             'model': 'Inverter',
-            'sw_version': '0.1.0',
+            'sw_version': '0.1.2',
         }
         sensors = [
-            ('grid_voltage', 'Grid Voltage', 'V', 'voltage'),
-            ('grid_frequency', 'Grid Frequency', 'Hz', None),
-            ('ac_output_voltage', 'AC Output Voltage', 'V', 'voltage'),
-            ('ac_output_frequency', 'AC Output Frequency', 'Hz', None),
-            ('ac_output_current', 'AC Output Current', 'A', 'current'),
-            ('ac_output_power', 'AC Output Power', 'W', 'power'),
-            ('output_load_percent', 'Output Load', '%', None),
-            ('battery_capacity', 'Battery Capacity', '%', 'battery'),
-            ('p_battery_voltage', 'Battery Voltage +', 'V', 'voltage'),
-            ('n_battery_voltage', 'Battery Voltage -', 'V', 'voltage'),
-            ('pv_input_voltage_1', 'PV Voltage 1', 'V', 'voltage'),
-            ('pv_input_power_1', 'PV Power 1', 'W', 'power'),
+            ('ac_input_voltage_v', 'AC Input Voltage', 'V', 'voltage'),
+            ('ac_input_frequency_hz', 'AC Input Frequency', 'Hz', None),
+            ('ac_output_voltage_v', 'AC Output Voltage', 'V', 'voltage'),
+            ('ac_output_frequency_hz', 'AC Output Frequency', 'Hz', None),
+            ('ac_output_apparent_power_va', 'AC Output Apparent Power', 'VA', None),
+            ('ac_output_active_power_w', 'AC Output Active Power', 'W', 'power'),
+            ('ac_output_load_percent', 'AC Output Load', '%', None),
+            ('bus_voltage_v', 'BUS Voltage', 'V', 'voltage'),
+            ('battery_voltage_v', 'Battery Voltage', 'V', 'voltage'),
+            ('battery_charging_current_a', 'Battery Charging Current', 'A', 'current'),
+            ('battery_capacity_percent', 'Battery Capacity', '%', 'battery'),
+            ('inverter_heatsink_temp_c', 'Inverter Heatsink Temp', '°C', 'temperature'),
+            ('pv_input_current_a', 'PV Input Current', 'A', 'current'),
+            ('pv_input_voltage_v', 'PV Input Voltage', 'V', 'voltage'),
+            ('pv_input_power_w', 'PV Input Power', 'W', 'power'),
+            ('battery_discharge_current_a', 'Battery Discharge Current', 'A', 'current'),
         ]
         for key, name, unit, dclass in sensors:
             self._publish_sensor_config(key, name, unit, dclass, base)
