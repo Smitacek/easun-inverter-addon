@@ -5,6 +5,14 @@
 - Logging and startup: handle single vs. multi-inverter configs without referencing deprecated cfg.port/cfg.baudrate.
 - Minor discovery/version string updates.
 
+## [0.2.2] - 2025-11-01
+### Added
+- Legacy base topics publishing for first inverter (backward compatibility with earlier entity names).
+- icon.png added for Add-on Store (in addition to SVG).
+
+### Fixed
+- Avoid UnboundLocalError when MQTT is disconnected (define device id per inverter before use).
+
 ## [0.2.0] - 2025-11-01
 ### Added
 - Multi-inverter mode: per-inverter MQTT discovery/state and per-device availability.

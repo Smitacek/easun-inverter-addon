@@ -16,7 +16,7 @@ def setup_logging(level: str = 'INFO'):
 def main():
     cfg = get_config()
     setup_logging(cfg.log_level)
-    logging.info('🔌 EASUN Inverter Add-on v0.2.1')
+    logging.info('🔌 EASUN Inverter Add-on v0.2.2')
     # Prepare inverter configs early (single or multi)
     inv_cfgs = get_enabled_inverters(cfg)
     if getattr(cfg, 'multi_inverter_mode', False) and len(inv_cfgs) > 1:

@@ -1,4 +1,4 @@
 name: "EASUN Inverter Add-ons Repository"
 url: "https://github.com/Smitacek/easun-inverter-addon"
 maintainer: "Smitacek"
-description: "EASUN/Voltronic solar inverter monitoring add-on with MQTT discovery - v0.2.1"
+description: "EASUN/Voltronic solar inverter monitoring add-on with MQTT discovery - v0.2.2"
