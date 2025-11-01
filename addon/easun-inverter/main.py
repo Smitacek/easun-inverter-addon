@@ -17,17 +17,22 @@ def main():
     cfg = get_config()
     setup_logging(cfg.log_level)
     logging.info('🔌 EASUN Inverter Add-on v0.2.0')
-    logging.info(f'Port: {cfg.port} @ {cfg.baudrate} baud, interval: {cfg.read_interval}s')
+    # Prepare inverter configs early (single or multi)
+    inv_cfgs = get_enabled_inverters(cfg)
+    if getattr(cfg, 'multi_inverter_mode', False) and len(inv_cfgs) > 1:
+        logging.info(f'Multi-inverter mode: {len(inv_cfgs)} devices, interval: {cfg.read_interval}s')
+        for ic in inv_cfgs:
+            logging.info(f" - {ic.name or ic.port}: {ic.port} @ {ic.baudrate} baud, phase: {ic.phase or '-'}")
+    else:
+        ic0 = inv_cfgs[0] if inv_cfgs else None
+        logging.info(f"Port: {ic0.port if ic0 else '?'} @ {ic0.baudrate if ic0 else '?'} baud, interval: {cfg.read_interval}s")
 
     mqtt = InverterMQTT(cfg.mqtt_host, cfg.mqtt_port, cfg.mqtt_username, cfg.mqtt_password, device_id=cfg.device_id)
     connected = mqtt.connect(timeout=10)
-    if connected:
-        mqtt.publish_discovery()
-    else:
+    if not connected:
         logging.warning('MQTT not connected; will run without publishing')
 
     # Prepare inverter configs
-    inv_cfgs = get_enabled_inverters(cfg)
     # Publish discovery per inverter
     if connected:
         for ic in inv_cfgs:
