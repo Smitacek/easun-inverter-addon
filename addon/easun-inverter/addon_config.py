@@ -5,18 +5,54 @@ import os
 from pathlib import Path
 
 
+class InverterConfig:
+    def __init__(self, port: str, baudrate: int = 2400, name: str | None = None,
+                 enabled: bool = True, phase: str | None = None, timeout: float = 3.0):
+        self.port = port
+        self.baudrate = baudrate
+        self.name = name or port
+        self.enabled = enabled
+        self.phase = phase  # 'L1'|'L2'|'L3' or None
+        self.timeout = timeout
+
+
 class Config:
     def __init__(self):
         self.load()
 
     def load(self):
         options = self._load_options()
-        self.port = options.get('port', os.getenv('PORT', '/dev/ttyUSB0'))
-        self.baudrate = int(options.get('baudrate', os.getenv('BAUDRATE', 2400)))
-        self.timeout = float(options.get('timeout', os.getenv('TIMEOUT', 3)))
+
+        # Multi-inverter support
+        self.multi_inverter_mode = bool(options.get('multi_inverter_mode', False))
+        self.inverters: list[InverterConfig] = []
+
+        if self.multi_inverter_mode:
+            for inv in options.get('inverters', []):
+                port = str(inv.get('port', '/dev/ttyUSB0'))
+                baud = int(inv.get('baudrate', 2400))
+                name = inv.get('name')
+                enabled = bool(inv.get('enabled', True))
+                phase = inv.get('phase')  # optional: L1/L2/L3
+                timeout = float(inv.get('timeout', options.get('timeout', 3)))
+                self.inverters.append(InverterConfig(port, baud, name, enabled, phase, timeout))
+        else:
+            # Single inverter fallback
+            port = options.get('port', os.getenv('PORT', '/dev/ttyUSB0'))
+            baud = int(options.get('baudrate', os.getenv('BAUDRATE', 2400)))
+            timeout = float(options.get('timeout', os.getenv('TIMEOUT', 3)))
+            self.inverters = [InverterConfig(port, baud, timeout=timeout)]
+
+        # Prefer /dev/serial/by-id where possible
         self.prefer_by_id = bool(str(options.get('prefer_by_id', True)).lower() in ('1','true','yes'))
         if self.prefer_by_id:
-            self.port = self._prefer_by_id(self.port)
+            for inv in self.inverters:
+                inv.port = self._prefer_by_id(inv.port)
+
+        # 3-phase grouping
+        self.group_3phase = bool(options.get('group_3phase', False))
+
+        # MQTT
         self.mqtt_host = options.get('mqtt_host', os.getenv('MQTT_HOST', 'core-mosquitto'))
         self.mqtt_port = int(options.get('mqtt_port', os.getenv('MQTT_PORT', 1883)))
         self.mqtt_username = options.get('mqtt_username', os.getenv('MQTT_USERNAME', ''))
@@ -50,3 +86,6 @@ class Config:
 
 def get_config() -> Config:
     return Config()
+
+def get_enabled_inverters(cfg: Config) -> list[InverterConfig]:
+    return [inv for inv in cfg.inverters if inv.enabled]

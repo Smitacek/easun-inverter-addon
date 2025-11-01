@@ -14,6 +14,25 @@ homeassistant: "2023.1.0"
 url: "https://github.com/Smitacek/easun-inverter-addon"
 apparmor: true
 options:
+  # Multi-inverter mode
+  multi_inverter_mode: false
+  inverters: []
+  # Example:
+  # inverters:
+  #   - port: "/dev/ttyUSB0"
+  #     baudrate: 2400
+  #     name: "INV_L1"
+  #     enabled: true
+  #     phase: "L1"   # optional: L1|L2|L3 (for 3-phase grouping)
+  #   - port: "/dev/ttyUSB1"
+  #     baudrate: 2400
+  #     name: "INV_L2"
+  #     phase: "L2"
+  #   - port: "/dev/ttyUSB2"
+  #     baudrate: 2400
+  #     name: "INV_L3"
+  #     phase: "L3"
+  group_3phase: false
   port: "/dev/ttyUSB0"
   baudrate: 2400
   timeout: 3
@@ -27,6 +46,15 @@ options:
   log_level: warning
 
 schema:
+  multi_inverter_mode: bool?
+  inverters:
+    - port: str
+      baudrate: int(110,256000)?
+      name: str?
+      enabled: bool?
+      phase: list(L1|L2|L3)?
+      timeout: int(1,30)?
+  group_3phase: bool?
   port: str
   baudrate: int(110,256000)
   timeout: int(1,30)

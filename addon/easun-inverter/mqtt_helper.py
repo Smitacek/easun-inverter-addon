@@ -119,6 +119,98 @@ class InverterMQTT:
         for key, name, unit, dclass in sensors:
             self._publish_sensor_config(key, name, unit, dclass, base)
 
+    # Multi-device support
+    def publish_discovery_for_device(self, device_id: str, device_name: str):
+        base = {
+            'manufacturer': 'EASUN',
+            'model': 'Inverter',
+            'sw_version': '0.1.4',
+        }
+        sensors = [
+            ('ac_input_voltage_v', 'AC Input Voltage', 'V', 'voltage'),
+            ('ac_input_frequency_hz', 'AC Input Frequency', 'Hz', None),
+            ('ac_output_voltage_v', 'AC Output Voltage', 'V', 'voltage'),
+            ('ac_output_frequency_hz', 'AC Output Frequency', 'Hz', None),
+            ('ac_output_apparent_power_va', 'AC Output Apparent Power', 'VA', None),
+            ('ac_output_active_power_w', 'AC Output Active Power', 'W', 'power'),
+            ('ac_output_load_percent', 'AC Output Load', '%', None),
+            ('bus_voltage_v', 'BUS Voltage', 'V', 'voltage'),
+            ('battery_voltage_v', 'Battery Voltage', 'V', 'voltage'),
+            ('battery_charging_current_a', 'Battery Charging Current', 'A', 'current'),
+            ('battery_capacity_percent', 'Battery Capacity', '%', 'battery'),
+            ('inverter_heatsink_temp_c', 'Inverter Heatsink Temp', '°C', 'temperature'),
+            ('pv_input_current_a', 'PV Input Current', 'A', 'current'),
+            ('pv_input_voltage_v', 'PV Input Voltage', 'V', 'voltage'),
+            ('pv_input_power_w', 'PV Input Power', 'W', 'power'),
+            ('battery_discharge_current_a', 'Battery Discharge Current', 'A', 'current'),
+            ('pv2_input_current_a', 'PV2 Input Current', 'A', 'current'),
+            ('pv2_input_voltage_v', 'PV2 Input Voltage', 'V', 'voltage'),
+            ('pv2_input_power_w', 'PV2 Input Power', 'W', 'power'),
+            ('scc_pwm_temp_c', 'SCC PWM Temperature', '°C', 'temperature'),
+            ('inverter_temp_c', 'Inverter Temperature', '°C', 'temperature'),
+            ('battery_temp_c', 'Battery Temperature', '°C', 'temperature'),
+            ('transformer_temp_c', 'Transformer Temperature', '°C', 'temperature'),
+            ('scc_charge_power_w', 'SCC Charge Power', 'W', 'power'),
+            ('sync_frequency_hz', 'Sync Frequency', 'Hz', None),
+            ('inverter_mode', 'Inverter Mode', '', None),
+            ('charge_stage', 'Charge Stage', '', None),
+            ('qpiri_battery_recharge_voltage_v', 'Battery Recharge Voltage (QPIRI)', 'V', 'voltage'),
+            ('qpiri_battery_under_voltage_v', 'Battery Under Voltage (QPIRI)', 'V', 'voltage'),
+            ('qpiri_battery_bulk_charge_voltage_v', 'Battery Bulk Voltage (QPIRI)', 'V', 'voltage'),
+            ('qpiri_battery_float_charge_voltage_v', 'Battery Float Voltage (QPIRI)', 'V', 'voltage'),
+        ]
+        avail_topic = f"easun/{device_id}/availability"
+        # Publish availability online for this device
+        try:
+            self.client.publish(avail_topic, payload="online", qos=1, retain=True)
+        except Exception:
+            pass
+        for key, name, unit, dclass in sensors:
+            self._publish_sensor_config_for_device(device_id, device_name, key, name, unit, dclass, base, avail_topic)
+        # Aggregator (3-phase) optional sensors (if this device_id is used for aggregator)
+        for key, name, unit, dclass in [
+            ('total_active_power_w', 'Total Active Power', 'W', 'power'),
+            ('total_apparent_power_va', 'Total Apparent Power', 'VA', None),
+            ('total_pv_power_w', 'Total PV Power', 'W', 'power'),
+            ('phases', 'Configured Phases', '', None),
+        ]:
+            self._publish_sensor_config_for_device(device_id, device_name, key, name, unit, dclass, base, avail_topic)
+
+    def _publish_sensor_config_for_device(self, device_id: str, device_name: str, key: str, name: str, unit: str, device_class: str | None, base: Dict[str, Any], avail_topic: str):
+        discovery_topic = f"homeassistant/sensor/{device_id}/{key}/config"
+        state_topic = f"easun/{device_id}/{key}"
+        cfg = {
+            'name': f"{device_name} {name}",
+            'unique_id': f"{device_id}_{key}",
+            'object_id': f"{device_id}_{key}",
+            'state_topic': state_topic,
+            'unit_of_measurement': unit,
+            'device': {
+                'identifiers': [device_id],
+                'name': device_name,
+                'manufacturer': base.get('manufacturer'),
+                'model': base.get('model'),
+                'sw_version': base.get('sw_version'),
+            },
+            'availability': [{
+                'topic': avail_topic,
+                'payload_available': 'online',
+                'payload_not_available': 'offline'
+            }]
+        }
+        if device_class:
+            cfg['device_class'] = device_class
+        if device_class == 'voltage':
+            cfg['suggested_display_precision'] = 3
+        self.client.publish(discovery_topic, json.dumps(cfg), retain=True)
+
+    def publish_state_for_device(self, device_id: str, data: Dict[str, Any]):
+        for key, value in data.items():
+            topic = f"easun/{device_id}/{key}"
+            if isinstance(value, float):
+                value = round(value, 3)
+            self.client.publish(topic, str(value))
+
     def _publish_sensor_config(self, key: str, name: str, unit: str, device_class: str | None, base: Dict[str, Any]):
         device_id = self.device_id
         object_id = key
