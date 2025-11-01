@@ -6,6 +6,7 @@ import time
 from typing import Dict, List, Optional
 
 import serial
+import re
 
 from protocol_helpers import build_command
 
@@ -48,6 +49,15 @@ class Inverter:
     def open(self) -> None:
         self._ser = serial.Serial(self.port_path, baudrate=self.baudrate, timeout=self.timeout)
         logger.info(f"Opened serial port {self.port_path} @ {self.baudrate} baud")
+        try:
+            # Some adapters/inverters need DTR/RTS toggle to wake
+            self._ser.dtr = False
+            self._ser.rts = False
+            time.sleep(0.05)
+            self._ser.dtr = True
+            self._ser.rts = True
+        except Exception:
+            pass
 
     def close(self) -> None:
         try:
@@ -93,7 +103,12 @@ class Inverter:
         # Remove everything after and including ')'
         if ')' in line:
             line = line.split(')')[0]
-        parts = [p for p in line.strip().split(' ') if p != '']
+        # Split and sanitize tokens: keep digits, sign and decimal point
+        raw_parts = [p for p in line.strip().split(' ') if p]
+        parts: List[str] = []
+        for tok in raw_parts:
+            cleaned = re.sub(r"[^0-9+\-.]", "", tok)
+            parts.append(cleaned)
         keys = self._map.get('QPIGS', [])
         data: Dict[str, float] = {}
         for i, key in enumerate(keys):
