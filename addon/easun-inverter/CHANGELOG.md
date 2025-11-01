@@ -16,6 +16,16 @@
 ### Changed
 - Align displayed and discovery software version strings to 0.1.3.
 
+## [0.1.4] - 2025-11-01
+### Added
+- QMOD: publish inverter mode (code + human-readable).
+- Q1: publish SCC/inverter/battery/transformer temperatures, SCC charge power, sync frequency, and charge stage.
+- QPIRI: publish selected battery settings (recharge/under/bulk/float voltages).
+- PV2 (if supported): publish PV2 current/voltage/power via QPIGS2.
+
+### Changed
+- Schedule periodic polling: Q1 every ~30s (or 2× read interval), QPIRI at start and then daily.
+
 ## [0.1.0] - 2025-10-31
 ### Added
 - Initial add-on: EASUN/Voltronic inverter over RS232/USB.

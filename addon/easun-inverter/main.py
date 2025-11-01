@@ -16,7 +16,7 @@ def setup_logging(level: str = 'INFO'):
 def main():
     cfg = get_config()
     setup_logging(cfg.log_level)
-    logging.info('🔌 EASUN Inverter Add-on v0.1.3')
+    logging.info('🔌 EASUN Inverter Add-on v0.1.4')
     logging.info(f'Port: {cfg.port} @ {cfg.baudrate} baud, interval: {cfg.read_interval}s')
 
     mqtt = InverterMQTT(cfg.mqtt_host, cfg.mqtt_port, cfg.mqtt_username, cfg.mqtt_password, device_id=cfg.device_id)
