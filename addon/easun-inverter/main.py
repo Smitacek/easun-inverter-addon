@@ -16,7 +16,7 @@ def setup_logging(level: str = 'INFO'):
 def main():
     cfg = get_config()
     setup_logging(cfg.log_level)
-    logging.info('🔌 EASUN Inverter Add-on v0.1.4')
+    logging.info('🔌 EASUN Inverter Add-on v0.2.0')
     logging.info(f'Port: {cfg.port} @ {cfg.baudrate} baud, interval: {cfg.read_interval}s')
 
     mqtt = InverterMQTT(cfg.mqtt_host, cfg.mqtt_port, cfg.mqtt_username, cfg.mqtt_password, device_id=cfg.device_id)
@@ -40,9 +40,9 @@ def main():
     # Keep process alive; retry on open/read errors for each inverter sequentially
     while True:
         # Build fresh objects each outer loop to recover failures
-        inv_objs = []
-        for ic in inv_cfgs:
-            inv_objs.append((ic, Inverter(ic.port, baudrate=ic.baudrate, timeout=ic.timeout)))
+            inv_objs = []
+            for ic in inv_cfgs:
+                inv_objs.append((ic, Inverter(ic.port, baudrate=ic.baudrate, timeout=ic.timeout)))
         try:
             for _, inv in inv_objs:
                 try:
@@ -94,6 +94,13 @@ def main():
                                     mqtt.publish_state_for_device(did, q1)
                             except Exception:
                                 pass
+                        # FW/SN once
+                        try:
+                            fwsn = inv.query_fw_sn()
+                            if fwsn and connected:
+                                mqtt.publish_state_for_device(did, fwsn)
+                        except Exception:
+                            pass
                         now = time.time()
                         last_ts = last_qpiri.get(did, 0.0)
                         if now - last_ts > 24*3600:

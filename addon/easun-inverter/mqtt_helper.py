@@ -78,7 +78,7 @@ class InverterMQTT:
         base = {
             'manufacturer': 'EASUN',
             'model': 'Inverter',
-            'sw_version': '0.1.4',
+            'sw_version': '0.2.0',
         }
         sensors = [
             ('ac_input_voltage_v', 'AC Input Voltage', 'V', 'voltage'),
@@ -115,6 +115,11 @@ class InverterMQTT:
             ('qpiri_battery_under_voltage_v', 'Battery Under Voltage (QPIRI)', 'V', 'voltage'),
             ('qpiri_battery_bulk_charge_voltage_v', 'Battery Bulk Voltage (QPIRI)', 'V', 'voltage'),
             ('qpiri_battery_float_charge_voltage_v', 'Battery Float Voltage (QPIRI)', 'V', 'voltage'),
+            # FW/SN info
+            ('firmware_version', 'Firmware Version', '', None),
+            ('firmware2_version', 'Firmware2 Version', '', None),
+            ('firmware3_version', 'Firmware3 Version', '', None),
+            ('serial_number', 'Serial Number', '', None),
         ]
         for key, name, unit, dclass in sensors:
             self._publish_sensor_config(key, name, unit, dclass, base)

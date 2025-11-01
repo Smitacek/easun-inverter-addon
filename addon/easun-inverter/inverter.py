@@ -207,6 +207,33 @@ class Inverter:
             out['qpiri_battery_float_charge_voltage_v'] = f(11)
         return out
 
+    def query_fw_sn(self) -> Dict[str, str]:
+        """Query firmware versions (QVFW, QVFW2, QVFW3) and serial (QID/QSID)."""
+        out: Dict[str, str] = {}
+        def parse_simple(resp: Optional[str]) -> Optional[str]:
+            if not resp:
+                return None
+            if resp.startswith('(') and ')' in resp:
+                return resp[1:resp.find(')')].strip()
+            return resp.strip()
+        outv = parse_simple(self.query('QVFW'))
+        if outv:
+            out['firmware_version'] = outv
+        outv2 = parse_simple(self.query('QVFW2'))
+        if outv2:
+            out['firmware2_version'] = outv2
+        outv3 = parse_simple(self.query('QVFW3'))
+        if outv3:
+            out['firmware3_version'] = outv3
+        sid = parse_simple(self.query('QSID'))
+        if sid:
+            out['serial_number'] = sid
+        else:
+            qid = parse_simple(self.query('QID'))
+            if qid:
+                out['serial_number'] = qid
+        return out
+
     def parse_qpigs(self, line: str) -> Dict[str, float]:
         """Parse QPIGS line using PI30 field order (21 tokens)."""
         if not line:
