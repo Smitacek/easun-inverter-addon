@@ -97,6 +97,10 @@ class InverterMQTT:
             ('pv_input_voltage_v', 'PV Input Voltage', 'V', 'voltage'),
             ('pv_input_power_w', 'PV Input Power', 'W', 'power'),
             ('battery_discharge_current_a', 'Battery Discharge Current', 'A', 'current'),
+            # Optional PV2 (if device supports QPIGS2)
+            ('pv2_input_current_a', 'PV2 Input Current', 'A', 'current'),
+            ('pv2_input_voltage_v', 'PV2 Input Voltage', 'V', 'voltage'),
+            ('pv2_input_power_w', 'PV2 Input Power', 'W', 'power'),
         ]
         for key, name, unit, dclass in sensors:
             self._publish_sensor_config(key, name, unit, dclass, base)

@@ -177,4 +177,29 @@ class Inverter:
         line = self.query('QPIGS')
         if not line:
             return {}
-        return self.parse_qpigs(line)
+        data = self.parse_qpigs(line)
+        # Try optional PV2 metrics via QPIGS2 if supported (PI30MAX/MST)
+        try:
+            line2 = self.query('QPIGS2')
+            if line2 and line2.startswith('('):
+                # Extract until ')'
+                payload = line2[1:line2.find(')')] if ')' in line2 else line2[1:]
+                parts = [p for p in payload.strip().split(' ') if p]
+                # Sanitize tokens
+                parts = [re.sub(r"[^0-9+\-.]", "", t) for t in parts]
+                if len(parts) >= 3:
+                    try:
+                        data['pv2_input_current_a'] = float(parts[0])
+                    except Exception:
+                        pass
+                    try:
+                        data['pv2_input_voltage_v'] = float(parts[1])
+                    except Exception:
+                        pass
+                    try:
+                        data['pv2_input_power_w'] = int(float(parts[2]))
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        return data
