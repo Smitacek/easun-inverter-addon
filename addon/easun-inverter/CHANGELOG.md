@@ -1,3 +1,16 @@
+## 0.2.3 — 2026-10-11
+
+- Recover each inverter independently after open/read/USB errors, including Linux termios errors; reopen only its configured serial identity.
+- Read CR-terminated binary frames, validate response CRC before ASCII decoding, and reject incomplete/invalid QPIGS snapshots instead of sanitizing corrupt fields.
+- Cache optional NAK commands, omit missing optional measurements, replay validated firmware/settings after MQTT reconnect and Home Assistant birth.
+- Use Paho 2 callback API, automatic reconnect including startup without a broker, connection LWT plus per-inverter availability, measurement expiry and read health diagnostics.
+- Publish standard entity names, default_entity_id, correct physical units/device classes and measurement statistics. Battery Capacity is now labeled Battery State of Charge; unique_id and canonical single-inverter topics remain stable.
+- Use a single canonical device in single-inverter mode; multi-device IDs use a configured name or a stable hash of the configured path. See README migration notes for old duplicate discovery definitions.
+- Do not publish partial three-phase totals or substitute a missing PV2 sample with zero.
+- Fix blank manual MQTT credentials masking Supervisor-provided credentials; declare optional MQTT service consumption.
+- Require an explicit port for the standalone probe; preserve its existing local file permissions.
+- Require Home Assistant 2025.10+ for default_entity_id. Add regression, serial-emulator and disposable-broker integration tests.
+
 # Changelog
 
 ## [0.2.1] - 2025-11-01

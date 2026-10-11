@@ -57,8 +57,12 @@ class Config:
         # MQTT
         self.mqtt_host = options.get('mqtt_host', os.getenv('MQTT_HOST', 'core-mosquitto'))
         self.mqtt_port = int(options.get('mqtt_port', os.getenv('MQTT_PORT', 1883)))
-        self.mqtt_username = options.get('mqtt_username', os.getenv('MQTT_USERNAME', ''))
-        self.mqtt_password = options.get('mqtt_password', os.getenv('MQTT_PASSWORD', ''))
+        if options.get('mqtt_username'):
+            self.mqtt_username = options['mqtt_username']
+            self.mqtt_password = options.get('mqtt_password', '')
+        else:
+            self.mqtt_username = os.getenv('MQTT_USERNAME', '')
+            self.mqtt_password = os.getenv('MQTT_PASSWORD', '')
         self.read_interval = int(options.get('read_interval', os.getenv('READ_INTERVAL', 30)))
         self.log_level = str(options.get('log_level', os.getenv('LOG_LEVEL', 'WARNING'))).upper()
         self.device_id = 'easun_inverter'

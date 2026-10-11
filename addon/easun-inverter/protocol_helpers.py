@@ -41,3 +41,16 @@ def build_command(cmd: str) -> bytes:
     body = bytes(cmd, 'utf-8')
     ch, cl = crc_pi(body)
     return body + bytes([ch, cl, 13])
+
+
+def decode_response(raw: bytes) -> str:
+    """Validate CR framing and escaped PI CRC before decoding the ASCII payload."""
+    if len(raw) < 5 or not raw.endswith(b"\r") or not raw.startswith(b"("):
+        raise ValueError("Missing or incomplete CR-terminated response")
+    payload, checksum = raw[:-3], raw[-3:-1]
+    if bytes(crc_pi(payload)) != checksum:
+        raise ValueError("Response CRC mismatch")
+    try:
+        return payload.decode('ascii')
+    except UnicodeDecodeError as exc:
+        raise ValueError("Non-ASCII response payload") from exc

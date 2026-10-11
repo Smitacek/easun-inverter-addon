@@ -1,172 +1,180 @@
 #!/usr/bin/env python3
+import hashlib
 import logging
+import re
+import signal
 import sys
+import termios
 import time
+from datetime import datetime, timezone
 
 from addon_config import get_config, get_enabled_inverters
 from inverter import Inverter
-from mqtt_helper import InverterMQTT
+from mqtt_helper import InverterMQTT, VERSION
 
 
-def setup_logging(level: str = 'INFO'):
-    log_level = getattr(logging, level.upper(), logging.INFO)
-    logging.basicConfig(level=log_level, format='[%(levelname)s] %(message)s', stream=sys.stdout)
+def setup_logging(level='INFO'):
+    logging.basicConfig(level=getattr(logging, level.upper(), logging.INFO),
+                        format='[%(levelname)s] %(message)s', stream=sys.stdout)
+
+
+def device_id(base, config, single):
+    if single:
+        return base
+    # Names are user-assigned stable device identities. A port-derived fallback
+    # uses the exact configured path; no serial-device enumeration or guessing.
+    if config.name and config.name != config.port:
+        suffix = re.sub(r'[^a-z0-9_]+', '_', config.name.lower()).strip('_')
+        if not suffix:
+            raise ValueError('Inverter name must contain ASCII letters or digits')
+    else:
+        suffix = hashlib.sha256(config.port.encode()).hexdigest()[:12]
+    return f'{base}_{suffix}'
+
+
+class DeviceReader:
+    def __init__(self, config, inverter, device_id):
+        self.config, self.inverter, self.device_id = config, inverter, device_id
+        self.last_success = None
+        self.errors = self.consecutive_errors = 0
+        self._last_error_log = None
+        self._next_extended = self._next_static = 0
+        self._static_data = {}
+
+    def failed(self, exc, now):
+        self.inverter.close()
+        self.errors += 1
+        self.consecutive_errors += 1
+        if self._last_error_log is None or now - self._last_error_log >= 60:
+            logging.warning('%s read failed (%s); reopening configured port next poll; consecutive errors=%s',
+                            self.config.name, exc, self.consecutive_errors)
+            self._last_error_log = now
+
+    def read(self, now=None):
+        try:
+            if not self.inverter.is_open:
+                self.inverter.open()
+            data = self.inverter.read_snapshot()
+            if not data:
+                raise ValueError('Empty QPIGS snapshot')
+        except (OSError, ValueError, termios.error) as exc:
+            self.failed(exc, time.time() if now is None else now)
+            return {}
+        self.last_success = time.time() if now is None else now
+        if self.consecutive_errors:
+            logging.info('%s recovered after %s failed polls', self.config.name, self.consecutive_errors)
+        self.consecutive_errors = 0
+        logging.debug('%s QPIGS: %s', self.config.name, data)
+        return data
+
+    def optional(self):
+        now = time.time()
+        data = {}
+        try:
+            data.update(self.inverter.query_qmod())
+            data.update(self.inverter.query_pv2())
+            if now >= self._next_extended:
+                self._next_extended = now + 60
+                data.update(self.inverter.query_q1())
+            if now >= self._next_static:
+                self._next_static = now + 24 * 3600
+                self._static_data.update(self.inverter.query_fw_sn())
+                self._static_data.update(self.inverter.query_qpiri())
+        except (OSError, ValueError, termios.error) as exc:
+            self.failed(exc, now)
+        data.update(self._static_data)
+        return data
+
+    def diagnostics(self):
+        now = time.time()
+        return {
+            'last_success': datetime.fromtimestamp(self.last_success, timezone.utc).isoformat() if self.last_success is not None else None,
+            'measurement_age_s': max(0, now - self.last_success) if self.last_success is not None else None,
+            'read_errors': self.errors,
+            'consecutive_read_errors': self.consecutive_errors,
+        }
+
+
+def aggregate_data(snapshots, configs, unsupported):
+    totals = {
+        'total_active_power_w': sum(d['ac_output_active_power_w'] for d in snapshots),
+        'total_apparent_power_va': sum(d['ac_output_apparent_power_va'] for d in snapshots),
+        'phases': ','.join(sorted({ic.phase for ic in configs if ic.phase})),
+    }
+    if all('pv2_input_power_w' in d or 'QPIGS2' in absent for d, absent in zip(snapshots, unsupported)):
+        totals['total_pv_power_w'] = sum(d['pv_input_power_w'] + (d['pv2_input_power_w'] if 'pv2_input_power_w' in d else 0) for d in snapshots)
+    return totals
 
 
 def main():
     cfg = get_config()
     setup_logging(cfg.log_level)
-    logging.info('🔌 EASUN Inverter Add-on v0.2.2')
-    # Prepare inverter configs early (single or multi)
-    inv_cfgs = get_enabled_inverters(cfg)
-    if getattr(cfg, 'multi_inverter_mode', False) and len(inv_cfgs) > 1:
-        logging.info(f'Multi-inverter mode: {len(inv_cfgs)} devices, interval: {cfg.read_interval}s')
-        for ic in inv_cfgs:
-            logging.info(f" - {ic.name or ic.port}: {ic.port} @ {ic.baudrate} baud, phase: {ic.phase or '-'}")
-    else:
-        ic0 = inv_cfgs[0] if inv_cfgs else None
-        logging.info(f"Port: {ic0.port if ic0 else '?'} @ {ic0.baudrate if ic0 else '?'} baud, interval: {cfg.read_interval}s")
+    logging.info('EASUN Inverter Add-on v%s', VERSION)
+    configs = get_enabled_inverters(cfg)
+    if not configs:
+        raise ValueError('No enabled inverters configured')
+    single = not cfg.multi_inverter_mode
+    ids = [device_id(cfg.device_id, ic, single) for ic in configs]
+    if len(set(ids)) != len(ids):
+        raise ValueError('Inverter names must identify distinct devices')
+    readers = [DeviceReader(ic, Inverter(ic.port, baudrate=ic.baudrate, timeout=ic.timeout), did)
+               for ic, did in zip(configs, ids)]
+    # Includes worst-case sequential required retries and initial optional queries.
+    expiry = max(90, 3 * cfg.read_interval + int(sum(12 * (ic.timeout + 0.2) for ic in configs)))
+    mqtt = InverterMQTT(cfg.mqtt_host, cfg.mqtt_port, cfg.mqtt_username, cfg.mqtt_password,
+                        device_id=cfg.device_id, expire_after=expiry)
+    aliases = {ids[0]: cfg.device_id} if not single and cfg.legacy_base_topics else {}
+    aggregate_id = f'{cfg.device_id}_3phase' if cfg.group_3phase and {ic.phase for ic in configs} >= {'L1','L2','L3'} else None
+    for did in set(ids) | set(aliases.values()) | ({aggregate_id} if aggregate_id else set()):
+        mqtt.register_device(did)
+    stopped = False
 
-    mqtt = InverterMQTT(cfg.mqtt_host, cfg.mqtt_port, cfg.mqtt_username, cfg.mqtt_password, device_id=cfg.device_id)
-    connected = mqtt.connect(timeout=10)
-    if not connected:
-        logging.warning('MQTT not connected; will run without publishing')
+    def stop(signum, frame):
+        nonlocal stopped
+        stopped = True
 
-    # Prepare inverter configs
-    # Publish discovery per inverter
-    if connected:
-        for ic in inv_cfgs:
-            did = f"{cfg.device_id}_{(ic.name or ic.port).lower().replace(' ','_')}"
-            mqtt.publish_discovery_for_device(did, ic.name or ic.port)
-        # If 3-phase grouping requested and phases L1/L2/L3 present, publish aggregator discovery
-        if cfg.group_3phase and {i.phase for i in inv_cfgs} >= {'L1','L2','L3'}:
-            mqtt.publish_discovery_for_device(f"{cfg.device_id}_3phase", "EASUN 3-Phase System")
-        # Legacy base discovery for first inverter (backward compatibility)
-        if getattr(cfg, 'legacy_base_topics', True) and inv_cfgs:
-            mqtt.publish_discovery()
-
-    # Keep process alive; retry on open/read errors for each inverter sequentially
-    while True:
-        # Build fresh objects each outer loop to recover failures
-        inv_objs = []
-        for ic in inv_cfgs:
-            inv_objs.append((ic, Inverter(ic.port, baudrate=ic.baudrate, timeout=ic.timeout)))
-        try:
-            for _, inv in inv_objs:
-                try:
-                    inv.open()
-                except Exception as e:
-                    logging.error(f'Failed to open inverter port: {e}')
-        except Exception as e:
-            time.sleep(5)
-            continue
-
-        try:
-            # Periodic counters
-            last_qpiri: dict[str, float] = {}
-            q1_every = max(30, cfg.read_interval * 2)
-            loop_count = 0
-            while True:
-                loop_count += 1
-                # Accumulate aggregator if 3-phase grouping
-                agg_active = 0
-                agg_apparent = 0
-                agg_pv = 0
-                phases_present = set()
-                for idx, (ic, inv) in enumerate(inv_objs):
-                    did = f"{cfg.device_id}_{(ic.name or ic.port).lower().replace(' ','_')}"
-                    data = {}
-                    try:
-                        data = inv.read_snapshot()
-                    except Exception as e:
-                        logging.error(f'Read error ({ic.name or ic.port}): {e}')
-                    if data:
-                        short = ', '.join(f'{k}={v}' for k, v in list(data.items())[:6])
-                        logging.info(f"{ic.name or ic.port} QPIGS: {short} ...")
-                        if connected:
-                            try:
-                                mqtt.publish_state_for_device(did, data)
-                            except Exception as e:
-                                logging.error(f'MQTT publish error: {e}')
-                            # Legacy base topics for first inverter
-                            if idx == 0 and getattr(cfg, 'legacy_base_topics', True):
-                                try:
-                                    mqtt.publish_state(data)
-                                except Exception:
-                                    pass
-                        # extended queries
-                        try:
-                            mod = inv.query_qmod()
-                            if mod and connected:
-                                mqtt.publish_state_for_device(did, mod)
-                                if idx == 0 and getattr(cfg, 'legacy_base_topics', True):
-                                    mqtt.publish_state(mod)
-                        except Exception:
-                            pass
-                        if (loop_count % max(1, int(q1_every / max(1, cfg.read_interval)))) == 0:
-                            try:
-                                q1 = inv.query_q1()
-                                if q1 and connected:
-                                    mqtt.publish_state_for_device(did, q1)
-                                    if idx == 0 and getattr(cfg, 'legacy_base_topics', True):
-                                        mqtt.publish_state(q1)
-                            except Exception:
-                                pass
-                        # FW/SN once
-                        try:
-                            fwsn = inv.query_fw_sn()
-                            if fwsn and connected:
-                                mqtt.publish_state_for_device(did, fwsn)
-                                if idx == 0 and getattr(cfg, 'legacy_base_topics', True):
-                                    mqtt.publish_state(fwsn)
-                        except Exception:
-                            pass
-                        now = time.time()
-                        last_ts = last_qpiri.get(did, 0.0)
-                        if now - last_ts > 24*3600:
-                            try:
-                                qpiri = inv.query_qpiri()
-                                if qpiri and connected:
-                                    mqtt.publish_state_for_device(did, qpiri)
-                                    if idx == 0 and getattr(cfg, 'legacy_base_topics', True):
-                                        mqtt.publish_state(qpiri)
-                            except Exception:
-                                pass
-                            last_qpiri[did] = now
-                        # aggregate sums
-                        agg_active += int(data.get('ac_output_active_power_w', 0) or 0)
-                        agg_apparent += int(data.get('ac_output_apparent_power_va', 0) or 0)
-                        pv1 = int(data.get('pv_input_power_w', 0) or 0)
-                        pv2 = int(data.get('pv2_input_power_w', 0) or 0)
-                        agg_pv += pv1 + pv2
-                        if ic.phase:
-                            phases_present.add(ic.phase)
-                # publish aggregator if configured and phases present
-                if cfg.group_3phase and phases_present >= {'L1','L2','L3'} and connected:
-                    agg_id = f"{cfg.device_id}_3phase"
-                    agg_data = {
-                        'total_active_power_w': agg_active,
-                        'total_apparent_power_va': agg_apparent,
-                        'total_pv_power_w': agg_pv,
-                        'phases': ','.join(sorted(phases_present)),
-                    }
-                    mqtt.publish_state_for_device(agg_id, agg_data)
-                time.sleep(cfg.read_interval)
-        except KeyboardInterrupt:
-            logging.info('Interrupted by user')
-            break
-        except Exception as e:
-            logging.error(f'Loop error, will reopen port: {e}')
-        finally:
-            try:
-                inv.close()
-            except Exception:
-                pass
-
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
+    mqtt.connect(timeout=10)
     try:
+        while not stopped:
+            if mqtt.connected and mqtt.discovery_needed:
+                mqtt.discovery_needed = False
+                for reader in readers:
+                    mqtt.publish_discovery_for_device(reader.device_id, reader.config.name if not single else 'EASUN Inverter')
+                if aliases:
+                    mqtt.publish_discovery()
+                if aggregate_id:
+                    mqtt.publish_discovery_for_device(aggregate_id, 'EASUN 3-Phase System', aggregate=True)
+            snapshots = []
+            for reader in readers:
+                data = reader.read()
+                targets = [reader.device_id] + ([aliases[reader.device_id]] if reader.device_id in aliases else [])
+                if data:
+                    # Optional unsupported commands cannot manufacture measurements.
+                    optional = reader.optional()
+                    data.update(optional)
+                healthy = bool(data) and reader.consecutive_errors == 0
+                snapshots.append(data if healthy else {})
+                if mqtt.connected:
+                    for did in targets:
+                        if data:
+                            mqtt.publish_state_for_device(did, data)
+                        mqtt.publish_state_for_device(did, reader.diagnostics())
+                        mqtt.set_available(did, healthy)
+            if aggregate_id and mqtt.connected:
+                healthy = all(snapshots)
+                if healthy:
+                    totals = aggregate_data(snapshots, configs, [r.inverter.unsupported_commands for r in readers])
+                    mqtt.publish_state_for_device(aggregate_id, totals)
+                mqtt.set_available(aggregate_id, healthy)
+            deadline = time.monotonic() + cfg.read_interval
+            while not stopped and time.monotonic() < deadline:
+                time.sleep(0.2)
+    finally:
+        for reader in readers:
+            reader.inverter.close()
         mqtt.disconnect()
-    except Exception:
-        pass
     return 0
 
 

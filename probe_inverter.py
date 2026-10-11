@@ -12,7 +12,6 @@ Examples:
 from __future__ import annotations
 
 import argparse
-import glob
 import sys
 import time
 from typing import Iterable, List
@@ -58,13 +57,6 @@ def build_command(cmd: str) -> bytes:
     body = cmd.encode("utf-8")
     hi, lo = crc_pi(body)
     return body + bytes([hi, lo, 13])
-
-
-def discover_default_port() -> str:
-    by_id = sorted(glob.glob("/dev/serial/by-id/*"))
-    if by_id:
-        return by_id[0]
-    return "/dev/ttyUSB0"
 
 
 def parse_bauds(v: str) -> List[int]:
@@ -120,7 +112,7 @@ def run_probe(port: str, bauds: Iterable[int], cmds: Iterable[str], timeout: flo
 
 def main(argv: List[str]) -> int:
     ap = argparse.ArgumentParser(description="Probe EASUN/Voltronic inverter over serial (PI protocol)")
-    ap.add_argument("--port", default=discover_default_port(), help="Serial device path (default: autodetect by-id or /dev/ttyUSB0)")
+    ap.add_argument("--port", required=True, help="Explicit serial device path; never auto-select another adapter")
     ap.add_argument("--baud", default="2400", help="Baud rate or comma-separated list (e.g., '2400,9600')")
     ap.add_argument("--timeout", type=float, default=1.5, help="Read timeout seconds")
     ap.add_argument("--delay", type=float, default=0.15, help="Delay after write before read")

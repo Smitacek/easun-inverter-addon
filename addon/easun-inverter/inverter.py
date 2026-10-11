@@ -7,8 +7,9 @@ from typing import Dict, List, Optional
 
 import serial
 import re
+import math
 
-from protocol_helpers import build_command
+from protocol_helpers import build_command, decode_response
 
 
 logger = logging.getLogger(__name__)
@@ -23,6 +24,7 @@ class Inverter:
         self.timeout = timeout
         self._ser: Optional[serial.Serial] = None
         self._map = self._load_map(map_path)
+        self.unsupported_commands = set()
 
     def _load_map(self, path: str) -> Dict[str, List[str]]:
         try:
@@ -47,6 +49,7 @@ class Inverter:
         ]}
 
     def open(self) -> None:
+        self.close()
         self._ser = serial.Serial(self.port_path, baudrate=self.baudrate, timeout=self.timeout)
         logger.info(f"Opened serial port {self.port_path} @ {self.baudrate} baud")
         try:
@@ -60,49 +63,63 @@ class Inverter:
             pass
 
     def close(self) -> None:
-        try:
-            if self._ser and self._ser.is_open:
-                self._ser.close()
-        except Exception:
-            pass
+        ser, self._ser = self._ser, None
+        if ser is not None:
+            try:
+                ser.close()
+            except (OSError, serial.SerialException):
+                pass
 
-    def _write(self, cmd: str) -> None:
-        assert self._ser
-        data = build_command(cmd)
-        self._ser.write(data)
-
-    def _readline(self) -> str:
-        assert self._ser
-        line = self._ser.readline()
-        try:
-            return line.decode('utf-8', errors='ignore').strip()
-        except Exception:
-            return ''
+    @property
+    def is_open(self):
+        return self._ser is not None and self._ser.is_open
 
     def query(self, cmd: str, retries: int = 2, delay: float = 0.1) -> Optional[str]:
+        if cmd in self.unsupported_commands:
+            return None
+        if not self.is_open:
+            raise serial.SerialException("Configured serial port is not open")
         for attempt in range(retries + 1):
+            # Discard late/partial responses before a new request. Never change port identity.
+            self._ser.reset_input_buffer()
+            packet = build_command(cmd)
+            if self._ser.write(packet) != len(packet):
+                raise serial.SerialTimeoutException("Incomplete command write")
+            time.sleep(delay)
+            raw = self._ser.read_until(expected=b"\r", size=1024)
             try:
-                self._write(cmd)
-                time.sleep(delay)
-                resp = self._readline()
-                if resp:
-                    return resp
-            except Exception as e:
-                logger.debug(f"Query {cmd} error: {e}")
-                time.sleep(0.2)
-        return None
+                response = decode_response(raw)
+            except ValueError:
+                if attempt == retries:
+                    raise
+                continue
+            if response == '(NAK':
+                if cmd == 'QPIGS':
+                    raise ValueError("QPIGS rejected by inverter")
+                self.unsupported_commands.add(cmd)
+                logger.info("Optional command %s unsupported; skipping until process restart", cmd)
+                return None
+            return response
+        raise ValueError("No valid response")
+
+    def optional_query(self, cmd, **kwargs):
+        try:
+            return self.query(cmd, retries=0, **kwargs)
+        except ValueError as exc:
+            logger.debug("Optional %s response ignored: %s", cmd, exc)
+            return None
 
     def query_qmod(self) -> Dict[str, str]:
         """Query inverter mode (QMOD) and map code to text."""
         out: Dict[str, str] = {}
-        line = self.query('QMOD')
+        line = self.optional_query('QMOD')
         if not line:
             return out
         # Response typically like: (L) or (B) etc.
         if line.startswith('(') and ')' in line:
             code = line[1:line.find(')')]
         else:
-            code = line.strip()
+            code = line.removeprefix('(')
         mode_map = {
             'P': 'Power On',
             'S': 'Standby',
@@ -113,6 +130,8 @@ class Inverter:
             'D': 'Shutdown',
             'Y': 'Bypass',
         }
+        if code not in mode_map:
+            return {}
         out['inverter_mode_code'] = code
         out['inverter_mode'] = mode_map.get(code, code)
         return out
@@ -120,7 +139,7 @@ class Inverter:
     def query_q1(self) -> Dict[str, float | str]:
         """Query extended status (Q1) for temps, SCC charge power, sync frequency, charge stage."""
         out: Dict[str, float | str] = {}
-        line = self.query('Q1', retries=1, delay=0.15)
+        line = self.optional_query('Q1', delay=0.15)
         if not line:
             return out
         # Extract payload inside parentheses
@@ -129,10 +148,12 @@ class Inverter:
         else:
             payload = line
         tokens = [t for t in payload.strip().split(' ') if t]
+        if len(tokens) != 17 or not all(re.fullmatch(r'[0-9]+(?:\.[0-9]+)?', t) for t in tokens):
+            return {}
         # Helper to safe-int/float
         def as_int(idx: int) -> Optional[int]:
             if idx < len(tokens):
-                t = re.sub(r"[^0-9+\-.]", "", tokens[idx])
+                t = tokens[idx]
                 try:
                     return int(t)
                 except Exception:
@@ -143,24 +164,34 @@ class Inverter:
             return None
         def as_float(idx: int) -> Optional[float]:
             if idx < len(tokens):
-                t = re.sub(r"[^0-9+\-.]", "", tokens[idx])
+                t = tokens[idx]
                 try:
                     return float(t)
                 except Exception:
                     return None
             return None
         # According to PI30 mapping (1-based in docs), approximate indices (0-based here)
-        out['scc_pwm_temp_c'] = as_int(5) or 0
-        out['inverter_temp_c'] = as_int(6) or 0
-        out['battery_temp_c'] = as_int(7) or 0
-        out['transformer_temp_c'] = as_int(8) or 0
-        out['scc_charge_power_w'] = as_int(13) or 0
+        value = as_int(5)
+        if value is not None:
+            out['scc_pwm_temp_c'] = value
+        value = as_int(6)
+        if value is not None:
+            out['inverter_temp_c'] = value
+        value = as_int(7)
+        if value is not None:
+            out['battery_temp_c'] = value
+        value = as_int(8)
+        if value is not None:
+            out['transformer_temp_c'] = value
+        value = as_int(13)
+        if value is not None:
+            out['scc_charge_power_w'] = value
         sf = as_float(15)
         if sf is not None:
             out['sync_frequency_hz'] = sf
         # Charge status (index 16 usually string like '10','11','12','13')
         if 16 < len(tokens):
-            status_code = re.sub(r"[^0-9]", "", tokens[16])
+            status_code = tokens[16]
             charge_map = {
                 '10': 'nocharging',
                 '11': 'bulk',
@@ -173,7 +204,7 @@ class Inverter:
     def query_qpiri(self) -> Dict[str, float | int | str]:
         """Query current settings (QPIRI) and parse primary fields."""
         out: Dict[str, float | int | str] = {}
-        line = self.query('QPIRI', retries=1, delay=0.15)
+        line = self.optional_query('QPIRI', delay=0.15)
         if not line:
             return out
         if line.startswith('('):
@@ -215,40 +246,41 @@ class Inverter:
                 return None
             if resp.startswith('(') and ')' in resp:
                 return resp[1:resp.find(')')].strip()
-            return resp.strip()
-        outv = parse_simple(self.query('QVFW'))
+            return resp.removeprefix('(').strip()
+        outv = parse_simple(self.optional_query('QVFW'))
         if outv:
             out['firmware_version'] = outv
-        outv2 = parse_simple(self.query('QVFW2'))
+        outv2 = parse_simple(self.optional_query('QVFW2'))
         if outv2:
             out['firmware2_version'] = outv2
-        outv3 = parse_simple(self.query('QVFW3'))
+        outv3 = parse_simple(self.optional_query('QVFW3'))
         if outv3:
             out['firmware3_version'] = outv3
-        sid = parse_simple(self.query('QSID'))
+        sid = parse_simple(self.optional_query('QSID'))
         if sid:
             out['serial_number'] = sid
         else:
-            qid = parse_simple(self.query('QID'))
+            qid = parse_simple(self.optional_query('QID'))
             if qid:
                 out['serial_number'] = qid
         return out
 
     def parse_qpigs(self, line: str) -> Dict[str, float]:
         """Parse QPIGS line using PI30 field order (21 tokens)."""
-        if not line:
-            return {}
-        # Extract payload inside parentheses (ignore trailing CRC bytes)
-        if line.startswith('('):
-            line = line[1:]
-        if ')' in line:
-            line = line.split(')')[0]
-        # Tokenize and sanitize numeric tokens
-        raw_parts = [p for p in line.strip().split(' ') if p]
-        parts: List[str] = []
-        for tok in raw_parts:
-            cleaned = re.sub(r"[^0-9+\-.]", "", tok)
-            parts.append(cleaned)
+        if not line or not line.startswith('('):
+            raise ValueError("QPIGS missing start marker")
+        parts = line[1:].split()
+        if len(parts) not in (21, 22):
+            raise ValueError(f"QPIGS expected 21 or 22 fields, got {len(parts)}")
+        for index, token in enumerate(parts):
+            if index in (16, 20):
+                width = 8 if index == 16 else 3
+                if not re.fullmatch(r"[01]{%d}" % width, token):
+                    raise ValueError(f"QPIGS invalid status bits at field {index}")
+            elif not re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", token) or not math.isfinite(float(token)):
+                raise ValueError(f"QPIGS invalid numeric field {index}")
+        if float(parts[10]) > 100:
+            raise ValueError("QPIGS battery state of charge exceeds 100%")
 
         # PI30 QPIGS mapping (indices 0..20)
         field_keys: List[str] = [
@@ -290,8 +322,8 @@ class Inverter:
                     data[key] = int(val_s)
                 else:
                     data[key] = float(val_s)
-            except Exception:
-                continue
+            except ValueError as exc:
+                raise ValueError(f"QPIGS invalid integer field {i}") from exc
 
         # Derive useful boolean flags from device_status_bits
         bits = str(data.get('device_status_bits', ''))
@@ -315,33 +347,14 @@ class Inverter:
         return data
 
     def read_snapshot(self) -> Dict[str, float]:
-        """Read a single snapshot using QPIGS."""
-        line = self.query('QPIGS')
+        """Required telemetry: only a complete, CRC-validated QPIGS is success."""
+        return self.parse_qpigs(self.query('QPIGS'))
+
+    def query_pv2(self):
+        line = self.optional_query('QPIGS2')
         if not line:
             return {}
-        data = self.parse_qpigs(line)
-        # Try optional PV2 metrics via QPIGS2 if supported (PI30MAX/MST)
-        try:
-            line2 = self.query('QPIGS2')
-            if line2 and line2.startswith('('):
-                # Extract until ')'
-                payload = line2[1:line2.find(')')] if ')' in line2 else line2[1:]
-                parts = [p for p in payload.strip().split(' ') if p]
-                # Sanitize tokens
-                parts = [re.sub(r"[^0-9+\-.]", "", t) for t in parts]
-                if len(parts) >= 3:
-                    try:
-                        data['pv2_input_current_a'] = float(parts[0])
-                    except Exception:
-                        pass
-                    try:
-                        data['pv2_input_voltage_v'] = float(parts[1])
-                    except Exception:
-                        pass
-                    try:
-                        data['pv2_input_power_w'] = int(float(parts[2]))
-                    except Exception:
-                        pass
-        except Exception:
-            pass
-        return data
+        parts = line.removeprefix('(').split()
+        if len(parts) != 3 or not all(re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", p) for p in parts):
+            return {}
+        return dict(zip(('pv2_input_current_a', 'pv2_input_voltage_v', 'pv2_input_power_w'), map(float, parts)))
